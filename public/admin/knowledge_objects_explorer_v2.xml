@@ -1,0 +1,45 @@
+<form>
+  <label>Knowledge Objects Explorer</label>
+  <description>Explore Data Models and Saved Searches by Index, User, or App.</description>
+  <fieldset submitButton="false">
+    <input type="dropdown" token="base_on_field">
+      <label>Base on</label>
+      <choice value="index">Index</choice>
+      <choice value="user">User</choice>
+      <choice value="app">App</choice>
+      <default>index</default>
+      <change>
+        <unset token="base_on_value"></unset>
+      </change>
+    </input>
+    <input type="text" token="base_on_value" depends="$base_on_field$">
+      <label>$base_on_field$</label>
+    </input>
+  </fieldset>
+  <row>
+    <panel>
+      <title>Data Models</title>
+      <table>
+        <search>
+          <query>| rest /servicesNS/-/-/datamodel/model | where $base_on_field$="$base_on_value$"</query>
+          <earliest>-1d@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Saved Searches</title>
+      <table>
+        <search>
+          <query>| rest /servicesNS/-/-/saved/searches | where $base_on_field$="$base_on_value$"</query>
+          <earliest>-1d@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+</form>
