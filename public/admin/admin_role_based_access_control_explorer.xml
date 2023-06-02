@@ -1,0 +1,331 @@
+<form theme="dark" stylesheet="admin_assistant_stylesheet.css">
+  <label>RBAC Explorer</label>
+  <description>Observe adherence to RBAC model design. Monitor system access.</description>
+  <!-- Base search to list indexes -->
+  <search id="indexes_base_search">
+    <query>
+      | rest $splunk_server_token$ servicesNS/-/-/data/indexes
+    </query>
+  </search>
+  <!-- Base search to list roles -->
+  <search id="roles_base_search">
+    <query>
+      | rest $splunk_server_token$ /servicesNS/-/-/authorization/roles 
+      | eval number_capabilities=mvcount(capabilities)
+      | eval capabilities_configured=if(number_capabilities &gt; 0, "y", "n")
+      | eval type=if(match(title,"^(?:admin|can_delete|power|splunk-system-role|user|ess_admin|ess_analyst|ess_user)$$"),"default","custom")
+      | join type=left title 
+          [| rest /services/authentication/users 
+          | mvexpand roles 
+          | stats dc(title) as number_users by roles 
+          | rename roles as title] 
+    </query>
+  </search>
+  <!-- Base search to list users -->
+  <search id="users_base_search">
+    <query>
+      | rest $splunk_server_token$ /servicesNS/-/-/authentication/users
+      | eval seconds_since_login=now()-last_successful_login
+      | eval last_successful_login=strftime(last_successful_login,"%Y-%m-%d %H:%M") 
+      | eval elapsed_since_login=case(seconds_since_login &lt; 3600, round(seconds_since_login / 60) . " min ago",
+          seconds_since_login &lt; 86400, round(seconds_since_login / 3600, 1) . " hours ago",
+          seconds_since_login &lt; 604800, round(seconds_since_login / 86400, 1) . " days ago",
+          seconds_since_login &lt; 31536000, round(seconds_since_login / 604800, 1) . " weeks ago",
+          seconds_since_login &gt;=31536000, round(seconds_since_login / 31536000, 1) . " yrs ago") 
+      | eval num_roles=mvcount(roles)
+    </query>
+  </search>
+  <fieldset submitButton="true" autoRun="true">
+    <input type="dropdown" token="splunk_server_token">
+      <label>Splunk Server</label>
+      <choice value="*">All</choice>
+      <choice value="local">local</choice>
+      <fieldForLabel>splunk_server</fieldForLabel>
+      <fieldForValue>splunk_server</fieldForValue>
+      <search base="roles_base_search">
+        <query>| stats values(splunk_server) as splunk_server 
+| mvexpand splunk_server</query>
+      </search>
+      <initialValue>*</initialValue>
+      <prefix>splunk_server=</prefix>
+    </input>
+  </fieldset>
+  <row>
+    <panel id="html_header1">
+      <html>
+        <h1 align="center">Roles and Indexes Overview</h1>
+      </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Roles</title>
+      <single>
+        <search base="roles_base_search">
+          <query>|stats dc(splunk_server)</query>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="underLabel">Distinct Splunk Servers</option>
+      </single>
+      <single>
+        <search base="roles_base_search">
+          <query>|stats dc(title)</query>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="underLabel">Distinct Roles</option>
+      </single>
+      <single>
+        <search base="indexes_base_search">
+          <query>|stats dc(title)</query>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="underLabel">Distinct Indexes</option>
+      </single>
+      <single>
+        <search base="users_base_search">
+          <query>|stats dc(title)</query>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x0877a6","0xf8be34","0xf1813f","0xdc4e41"]</option>
+        <option name="underLabel">Distinct Users</option>
+      </single>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <table>
+        <title>Authentication Integrations</title>
+        <search>
+          <query>| rest $splunk_server_token$ services/admin/SAML-groups 
+| eval type="SAML-groups" 
+| append 
+    [ rest splunk_server=* services/admin/LDAP-groups 
+    | eval type="LDAP-groups"] 
+| table splunk_server type title roles author updated 
+| stats dc(title) as group_count dc(roles) as role_count by splunk_server type 
+| sort - group_count role_count</query>
+          <earliest>-60m@m</earliest>
+          <latest>now</latest>
+          <sampleRatio>1</sampleRatio>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="config">
+          <colorPalette type="map">{"total":#294E70}</colorPalette>
+        </format>
+        <format type="color" field="count">
+          <colorPalette type="minMidMax" maxColor="#294E70" minColor="#FFFFFF"></colorPalette>
+          <scale type="minMidMax" minType="percentile" minValue="99.9999"></scale>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <table>
+        <title>Roles by Type</title>
+        <search base="roles_base_search">
+          <query>| stats dc(title) as number_roles by splunk_server type 
+| sort - number_roles</query>
+        </search>
+        <option name="drilldown">none</option>
+        <format type="color" field="type">
+          <colorPalette type="map">{"total":#294E70}</colorPalette>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <table>
+        <title>Indexes by App</title>
+        <search base="indexes_base_search">
+          <query>| rename eai:acl.app as app 
+| stats dc(title) as number_indexes by app 
+| sort - number_indexes</query>
+        </search>
+        <option name="drilldown">none</option>
+        <format type="color" field="app">
+          <colorPalette type="map">{"total":#294E70}</colorPalette>
+        </format>
+      </table>
+    </panel>
+    <panel>
+      <table>
+        <title>Users by Admin, Type</title>
+        <search base="users_base_search">
+          <query>| eval is_admin=if(roles="admin", "y", "n") 
+| mvcombine splunk_server 
+| stats dc(title) as user_count by is_admin type 
+| sort - user_count</query>
+        </search>
+        <option name="drilldown">none</option>
+        <format type="color" field="is_admin">
+          <colorPalette type="map">{"total":#708794}</colorPalette>
+        </format>
+        <format type="color" field="count">
+          <colorPalette type="minMidMax" maxColor="#294E70" minColor="#FFFFFF"></colorPalette>
+          <scale type="minMidMax" minType="percentile" minValue="99.99999"></scale>
+        </format>
+        <format type="color" field="type">
+          <colorPalette type="map">{"total":#294E70}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel id="html_header2">
+      <html>
+        <h1 align="center">Explore Data Access</h1>
+      </html>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Role Details</title>
+      <input type="multiselect" token="role_token" searchWhenChanged="true">
+        <label>Filter by Role</label>
+        <prefix>(</prefix>
+        <suffix>)</suffix>
+        <valuePrefix>title=</valuePrefix>
+        <delimiter> OR </delimiter>
+        <fieldForLabel>title</fieldForLabel>
+        <fieldForValue>title</fieldForValue>
+        <search>
+          <query>| rest $splunk_server_token$ /services/authorization/roles
+| fields title
+| dedup title</query>
+          <earliest>0</earliest>
+          <latest></latest>
+        </search>
+        <choice value="*">All</choice>
+        <initialValue>*</initialValue>
+      </input>
+      <input type="dropdown" token="srchIndexesAllowed_token" searchWhenChanged="true">
+        <label>srchIndexesAllowed</label>
+        <choice value="">- any -</choice>
+        <choice value="srchIndexesAllowed=&quot;_*&quot;">_*</choice>
+        <choice value="| where srchIndexesAllowed=&quot;*&quot;">*</choice>
+        <default></default>
+        <fieldForLabel>title</fieldForLabel>
+        <fieldForValue>title_token</fieldForValue>
+        <search>
+          <query>|  rest $splunk_server_token$ services/data/indexes
+| dedup title
+| fields title
+| eval title_token="srchIndexesAllowed=".title</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+      </input>
+      <input type="dropdown" token="srchIndexesAllowed_token" searchWhenChanged="true">
+        <label>imported_srchIndexesAllowed</label>
+        <choice value="">- any -</choice>
+        <choice value="imported_srchIndexesAllowed=&quot;_*&quot;">_*</choice>
+        <choice value="| where imported_srchIndexesAllowed=&quot;*&quot;">*</choice>
+        <default></default>
+        <fieldForLabel>title</fieldForLabel>
+        <fieldForValue>title_token</fieldForValue>
+        <search>
+          <query>|  rest $splunk_server_token$ services/data/indexes
+| dedup title
+| fields title
+| eval title_token="imported_srchIndexesAllowed=".title</query>
+          <earliest>-24h@h</earliest>
+          <latest>now</latest>
+        </search>
+      </input>
+      <input type="radio" token="capabilities_token" searchWhenChanged="true">
+        <label>Show Capabilities In a Column</label>
+        <choice value="capabilities number_users">yes</choice>
+        <choice value="number_users">no</choice>
+        <default>number_users</default>
+      </input>
+      <table>
+        <search base="roles_base_search">
+          <query>| fields splunk_server title srchIndexesAllowed srchIndexesDefault srchFilter imported_roles imported_srchIndexesAllowed imported_srchFilter defaultApp author number_capabilities number_users capabilities
+| rename imported_* as "imported *"
+| search $role_token$ $srchIndexesAllowed_token$ 
+| eval capabilities=mvjoin(capabilities,"; ") 
+| table splunk_server title srchIndexesAllowed srchIndexesDefault srchFilter imported* defaultApp author number_capabilities $capabilities_token$ 
+| sort - number_users updated</query>
+        </search>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="rowNumbers">true</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+        <format type="color" field="number_users">
+          <colorPalette type="minMidMax" maxColor="#294E70" minColor="#3C444D"></colorPalette>
+          <scale type="minMidMax" minValue="0"></scale>
+        </format>
+        <format type="color" field="number_capabilities">
+          <colorPalette type="minMidMax" maxColor="#294E70" minColor="#3C444D"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+  <row>
+    <panel>
+      <title>Explore Users</title>
+      <input type="multiselect" token="userSrch_user_token" searchWhenChanged="true">
+        <label>Filter by User</label>
+        <choice value="*">All</choice>
+        <prefix>(</prefix>
+        <suffix>)</suffix>
+        <initialValue>*</initialValue>
+        <valuePrefix>title=</valuePrefix>
+        <delimiter> OR </delimiter>
+        <fieldForLabel>title</fieldForLabel>
+        <fieldForValue>title</fieldForValue>
+        <search>
+          <query>| rest /services/authentication/users
+| fields title
+| dedup title</query>
+          <earliest>0</earliest>
+          <latest></latest>
+        </search>
+      </input>
+      <input type="multiselect" token="userSrch_role_token" searchWhenChanged="true">
+        <label>Filter by Role</label>
+        <choice value="*">All</choice>
+        <prefix>(</prefix>
+        <suffix>)</suffix>
+        <initialValue>*</initialValue>
+        <valuePrefix>roles=</valuePrefix>
+        <delimiter> OR </delimiter>
+        <fieldForLabel>title</fieldForLabel>
+        <fieldForValue>title</fieldForValue>
+        <search>
+          <query>| rest /services/authorization/roles
+| fields title
+| dedup title</query>
+          <earliest>0</earliest>
+          <latest></latest>
+        </search>
+      </input>
+      <table>
+        <title>Queries REST /services/authentication/users for all roles assigned to a user.</title>
+        <search base="users_base_search">
+          <query>| eval last_successful_login=last_successful_login." - ".elapsed_since_login | search $userSrch_user_token$ $userSrch_role_token$ 
+| rename title as userName, realname as Name 
+| table splunk_server Name userName email roles defaultApp type last_successful_login  
+| sort - lastLogin</query>
+        </search>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">none</option>
+        <option name="drilldown">none</option>
+        <option name="percentagesRow">false</option>
+        <option name="refresh.display">progressbar</option>
+        <option name="rowNumbers">false</option>
+        <option name="totalsRow">false</option>
+        <option name="wrap">true</option>
+        <format type="color" field="roles">
+          <colorPalette type="map"></colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+</form>
